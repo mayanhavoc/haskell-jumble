@@ -33,6 +33,8 @@ library
       src
   build-depends:
       base >=4.7 && <5
+    , containers
+    , random
   default-language: Haskell2010
 
 executable jumble
@@ -44,7 +46,9 @@ executable jumble
   ghc-options: -threaded -rtsopts -with-rtsopts=-N -dynamic
   build-depends:
       base >=4.7 && <5
+    , containers
     , haskell-jumble
+    , random
   default-language: Haskell2010
 
 test-suite haskell-jumble-test
@@ -57,6 +61,8 @@ test-suite haskell-jumble-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , containers
     , haskell-jumble
     , hspec
+    , random
   default-language: Haskell2010

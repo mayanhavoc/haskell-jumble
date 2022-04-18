@@ -285,10 +285,6 @@ We can now use our infinitely large set of rows and cols that we declared earlie
 
 And now we can call `zipOverGrid` on our infinite coordinates grid `coordsInf` and our grid of words `grid` to get our Jumble.
 
-### Searching the grid with a custom recursive function
-
-### Modelling the Game with Haskell's data types
-
 We're going to add **parameterized type synonyms** to create different types of Grid.
 We're going to create a new data type called Cell.
 We're going to incoorporate our coordinate grid.
@@ -431,6 +427,13 @@ We can use **pattern matching** to match on a Cell and its coordinates tuple. We
 
 We also need to create a `Char` grid from our `Cell` grid and return `unlines` of that grid of chars.
 
+```
+formatGrid :: Grid Cell -> String
+   formatGrid =
+    let charGrid = undefined
+    in unlines charGrid
+```
+
 To turn a grid of Cells to a grid of Chars we can look at the `zipOverGrid` function where we call `zipWith zip` and `zipOverGridWith` is `zipWith` composed with `zipWith`
 
 `zipOverGrid :: zipWith zip`
@@ -453,6 +456,321 @@ formatGrid grid =
    in unlines charGrid
 ```
 
+We'll define `mapOverGrid` as a helper function to replace `(map . map)`.
+This gives us the opportunity to add a type signature so we can see explicitly what the type of this expression is.
+
+`mapOverGrid :: (a -> b) -> Grid a -> Grid b`
+`mapOverGrid = map . map`
+
+Now that we have a way to take a Grid of Cells into a Grid of Chars, we can simplify `formatGrid`
+
+From this:
+
+```
+formatGrid :: Grid Cell -> String
+formatGrid grid =
+  let charGrid = mapOverGrid cell2char grid
+   in unlines charGrid
+```
+
+To this
+
+```
+formatGrid :: Grid Cell -> String
+formatGrid grid = unlines (mapOverGrid cell2char grid)
+```
+
+And we can see again a function composition pattern, so we can simplify further
+
+`formatGrid grid = unlines . mapOverGrid cell2char $ grid`
+`formatGrid = unlines . mapOverGrid cell2char`
+
+**MORE REFACTORING**
+
+```
+getLines :: Grid Char -> [String]
+getLines grid =
+    let horizontal = grid
+        vertical = transpose grid
+        diagonal1 = diagonalize grid
+        diagonal2 = diagonalize (map reverse grid)
+        lines = horizontal ++ vertical ++ diagonal1 ++ diagonal2
+    in lines ++ (map reverse lines)
+```
+
+can easily be refactored into a grid of Cell:
+
+```
+getLines :: Grid Cell -> [[Cell]]
+getLines grid =
+    let horizontal = grid
+        vertical = transpose grid
+        diagonal1 = diagonalize grid
+        diagonal2 = diagonalize (map reverse grid)
+        lines = horizontal ++ vertical ++ diagonal1 ++ diagonal2
+    in lines ++ (map reverse lines)
+```
+
+We need to make sure that all other functions included in the `getLines` function are also refactored to take in a `Cell` type insted of `Char`,
+e.g.
+
+From
+
+`diagonalize :: Grid Char -> Grid Char`
+
+To
+
+`diagonalize :: Grid Cell -> Grid Cell`
+`diagonalize = transpose . skew`
+
+Now the `skew` function needs to be refactored. The compiler points us towards the colon `(:)` operator. We use the `(:)` to concatenate a '\_' character with a line:
+
+```
+skew (l:ls) = l : skew (map indent ls)
+    where indent line = '_' : line
+```
+
+This won't work because `line` is now a list of `Cell`
+
+`lines = horizontal ++ vertical ++ diagonal1 ++ diagonal2`
+
+However, we can generalize our skew function because all we are doing is passing in an indentation:
+
+```
+skew (l:ls) = l : skew (map indent ls)
+    where indent line = Indent : line
+```
+
+What we have to do now is to look for our definition of `Cell`:
+
+`data Cell = Cell (Integer, Integer) Char deriving (Eq, Ord, Show)`
+
+We need to add an alternative, which is the constructor `Indent` which doesn't need to take in any parameters:
+
+```
+data Cell = Cell (Integer, Integer) Char
+           | Indent
+             deriving (Eq, Ord, Show)
+```
+
+Even though `getLines` itself didn't have a `Char` constraint, it's being called from another function `findWord` that is expecting `Char`
+
+`findWord :: Grid Char -> String -> Maybe String`
+
+Now we **refactor** the `findWord` function.
+Now the `Grid` takes a `Cell`, `String` is the word we are searching for, so it stays `String` and the result now needs to be a `Maybe` list of cells which will be the word and the coordinate positions.
+
+`findWord :: Grid Cell -> String -> Maybe [Cell]`
+
+Next is `findWordInLine` which takes in a `String` which is the word being searched for, another `String` which is the line and returns a Boolean.
+
+`findWordInLine :: String -> String -> Bool`
+
+We can start to refactor by taking the second `String` and turning it into a list of `Cell`.
+
+`findWordInLine :: String -> [Cell] -> Bool`
+
+However, now `isInfixOf` in `findWordInLine = isInfixOf` will not work because
+`:t isInfixOf` takes a list of `a` and a list of `a` and returns a `Bool`.
+`isInfixOf :: Eq a => [a] -> [a] -> Bool`
+
+For now, we'll leave it `undefined`.
+
+Let's move on to the `findWords` expression.
+
+`findWords :: Grid Char -> [String] -> [String]`
+
+We can start by changing the Grid of Char to a Grid of Cell.
+We still want a list of strings, as they are the words to be found.
+And we want it to return a list of lists of cells.
+
+`findWords :: Grid Cell -> [String] -> [[Cell]]`
+
+Previously, we simply returned a `Bool` when we `foundWordInLine` and then it returned the word itself.
+Now we need to return a `Maybe` list of `Cell`. Which means that `findWordInLine` is going to need to return a `Maybe` list of `Cell`
+
+`findWordInline :: String -> [[Cell]] -> Maybe [[Cell]]`
+
+However, now mapping `findWordInLine` over `lines` wouldn't return a list of boolean values but a list of `Maybe` values.
+
+### Searching the grid with a custom recursive function
+
+#### Replacing `isInfixOf` with a new data structure
+
+To do this we will create two kinds of **recursive** function:
+
+- A recursive search by prefix
+- Build this recursive search into a recursive infix search
+
+The problem now is that where before in our grid we had
+
+```
+["__C________R___","__SI________U__","__HASKELL____B_","__A__A_____S__Y","__R___B___C____","__PHP____H_____","____S_LREP_____","____I__M_Y__L__","____L_E__T_O___","_________HB____","_________O_____","________CN_____"]
+```
+
+whereas now we have
+
+```
+[
+    [Cell (0,0) '_',Cell (0,1) '_',Cell (0,2) 'C',Cell (0,3) '_',Cell (0,4) '_',Cell (0,5) '_',Cell (0,6) '_',Cell (0,7) '_',Cell (0,8) '_',Cell (0,9) '_',Cell (0,10) '_',Cell (0,11) 'R',Cell (0,12) '_',Cell (0,13) '_',Cell (0,14) '_'],[Cell (1,0) '_',Cell (1,1) '_',Cell (1,2) 'S',Cell (1,3) 'I',Cell (1,4) '_',Cell (1,5) '_',Cell (1,6) '_',Cell (1,7) '_',Cell (1,8) '_',Cell (1,9) '_',Cell (1,10) '_',Cell (1,11) '_',Cell (1,12) 'U',Cell (1,13) '_',Cell (1,14) '_'],
+    [Cell (2,0) '_',Cell (2,1) '_',Cell (2,2) 'H',Cell (2,3) 'A',Cell (2,4) 'S',Cell (2,5) 'K',Cell (2,6) 'E',Cell (2,7) 'L',Cell (2,8) 'L',Cell (2,9) '_',Cell (2,10) '_',Cell (2,11) '_',Cell (2,12) '_',Cell (2,13) 'B',Cell (2,14) '_'],
+    [Cell (3,0) '_',Cell (3,1) '_',Cell (3,2) 'A',Cell (3,3) '_',Cell (3,4) '_',Cell (3,5) 'A',Cell (3,6) '_',Cell (3,7) '_',Cell (3,8) '_',Cell (3,9) '_',Cell (3,10) '_',Cell (3,11) 'S',Cell (3,12) '_',Cell (3,13) '_',Cell (3,14) 'Y'],
+    [Cell (4,0) '_',Cell (4,1) '_',Cell (4,2) 'R',Cell (4,3) '_',Cell (4,4) '_',Cell (4,5) '_',Cell (4,6) 'B',Cell (4,7) '_',Cell (4,8) '_',Cell (4,9) '_',Cell (4,10) 'C',Cell (4,11) '_',Cell (4,12) '_',Cell (4,13) '_',Cell (4,14) '_'],
+    [Cell (5,0) '_',Cell (5,1) '_',Cell (5,2) 'P',Cell (5,3) 'H',Cell (5,4) 'P',Cell (5,5) '_',Cell (5,6) '_',Cell (5,7) '_',Cell (5,8) '_',Cell (5,9) 'H',Cell (5,10) '_',Cell (5,11) '_',Cell (5,12) '_',Cell (5,13) '_',Cell (5,14) '_'],
+    [Cell (6,0) '_',Cell (6,1) '_',Cell (6,2) '_',Cell (6,3) '_',Cell (6,4) 'S',Cell (6,5) '_',Cell (6,6) 'L',Cell (6,7) 'R',Cell (6,8) 'E',Cell (6,9) 'P',Cell (6,10) '_',Cell (6,11) '_',Cell (6,12) '_',Cell (6,13) '_',Cell (6,14) '_'],
+    [Cell (7,0) '_',Cell (7,1) '_',Cell (7,2) '_',Cell (7,3) '_',Cell (7,4) 'I',Cell (7,5) '_',Cell (7,6) '_',Cell (7,7) 'M',Cell (7,8) '_',Cell (7,9) 'Y',Cell (7,10) '_',Cell (7,11) '_',Cell (7,12) 'L',Cell (7,13) '_',Cell (7,14) '_'],
+    [Cell (8,0) '_',Cell (8,1) '_',Cell (8,2) '_',Cell (8,3) '_',Cell (8,4) 'L',Cell (8,5) '_',Cell (8,6) 'E',Cell (8,7) '_',Cell (8,8) '_',Cell (8,9) 'T',Cell (8,10) '_',Cell (8,11) 'O',Cell (8,12) '_',Cell (8,13) '_',Cell (8,14) '_'],[Cell (9,0) '_',Cell (9,1) '_',Cell (9,2) '_',Cell (9,3) '_',Cell (9,4) '_',Cell (9,5) '_',Cell (9,6) '_',Cell (9,7) '_',Cell (9,8) '_',Cell (9,9) 'H',Cell (9,10) 'B',Cell (9,11) '_',Cell (9,12) '_',Cell (9,13) '_',Cell (9,14) '_'],
+    [Cell (10,0) '_',Cell (10,1) '_',Cell (10,2) '_',Cell (10,3) '_',Cell (10,4) '_',Cell (10,5) '_',Cell (10,6) '_',Cell (10,7) '_',Cell (10,8) '_',Cell (10,9) 'O',Cell (10,10) '_',Cell (10,11) '_',Cell (10,12) '_',Cell (10,13) '_',Cell (10,14) '_'],
+    [Cell (11,0) '_',Cell (11,1) '_',Cell (11,2) '_',Cell (11,3) '_',Cell (11,4) '_',Cell (11,5) '_',Cell (11,6) '_',Cell (11,7) '_',Cell (11,8) 'C',Cell (11,9) 'N',Cell (11,10) '_',Cell (11,11) '_',Cell (11,12) '_',Cell (11,13) '_',Cell (11,14) '_']]
+```
+
+If we look at the word "HASKELL", where before we would've found 'H', now we find 'H',Cell (2,3).
+
+Now if we look at the type of `isInfixOf` we can see that it takes two lists and returns a Bool.
+
+`:t isInfixOf`
+`isInfixOf :: Eq a => [a] -> [a] -> Bool`
+So if we do
+
+```
+"HASKELL" `isInfixOf` "___HASKELL__"
+```
+
+it will return true. This is undesirable.
+
+Instead we can use a related function `isPrefixOf` that fails for "**HASKELL**" but is true where HASKELL is at the beginning of the string.
+
+That's a simpler function that we could implement first.
+
+So we would like to check if the word "HASKELL" matched that portion of the line.
+
+Let's start by defining a new function called `findWordInCellLinePrefix` which takes a String, _which is the word we are searching for_, and a list of `Cell`.
+
+`findWordInLine` returned a `Bool`, we now need to return a `Maybe` list of `Cell` if it's found.
+
+`findWordInCellLinePrefix :: String -> [Cell] -> Maybe [Cell]`
+
+And we call it with the word and the line, we can think of the word as being a character `c` followed by a list of characters `cs`. However, because we then need to pass a line in the same way (A lines is a list of cells), we'll disambiguate by referring to the characters as `x:xs` and cells as `c:cs` and we'll add a guard clause where we compare `x` against `c`.
+
+`findWordInCellLinePrefix (x:xs) (c:cs) | x == c`
+
+However, `x` is a `Char` and `c` is a `Cell`. So we need to pass `c` through a function that turns cells to chars.
+
+This branch of the function will only run if they compare
+`findWordInCellLinePrefix (x:xs) (c:cs) | x == cell2char c`
+
+and if they do, we'll return the cell followed by a recursive call into `findWordInCellLinePrefix` and we pass in the `xs` and the `cs`
+
+```
+findWordInCellLinePrefix :: String ->. [Cell] -> Maybe [Cell]
+findWordInCellLinePrefix (x:xs) (c:cs) | x == cell2char c
+    = c : findWordInCellLinePrefix xs cs
+```
+
+Then we need to write the base case
+`findWordInCellLinePrefix _ _ = Nothing`
+
+Because we are using the `Maybe` type, we return `Nothing`.
+
+However, this won't work as `c` and `findWordInCellLinePrefix xs cs` are different types.
+
+There's a common pattern used when working with recursive functions of this complexity, and that is to add an **accumulator**, a new list. This list will **accumulate** the values we are trying to pick up.
+
+```
+findWordInCellLinePrefix :: [Cell] -> String -> [Cell] -> Maybe [Cell]
+findWordInCellLinePrefix acc (x:xs) (c:cs) | x == cell2char c
+```
+
+and now we can simply call the function again, pass in the **accumulator** and the tail of the two lists that we are comparing. And because we need the accumulator to accumulate something , we need to add the cell to that list.
+
+```
+findWordInCellLinePrefix :: [Cell] -> String -> [Cell] -> Maybe [Cell]
+findWordInCellLinePrefix acc (x:xs) (c:cs) | x == cell2char c
+    = findWordInCellLinePrefix (c : acc) xs cs
+findWordInCellLinePrefix _ _ = Nothing
+```
+
+In ` = findWordInCellLinePrefix (c : acc)` we use `c : acc` instead of `acc ++ [c]` because the `++` operator is a little inefficient compared to cons. The only problem with this solution is that now our list will be returned in the wrong order but it's very simple and efficient to reverse it on the other end.
+
+Our second base case needs to split up into several base cases.
+
+If we know that the lists of strings to compare is now an empty list, that means that we must've got to the end of the comparison, and that the comparison has matched, which means we can return the accumulator and because this is a successful call, we would return a `Just acc`.
+
+`findWordInCellLinePrefix acc [] _ = Just acc`
+
+If we have any other case, we can throw away the result of the `acc` (we match it with an `_`), we don't care what the rest of the string is because nothing matched so there's nothing left to do and we don't care what the rest of the line is and we can simply return `Nothing`.
+
+`findWordInCellLinePrefix _ _ _ = Nothing`
+
+In total we have **three** cases:
+The case in which we **recurse** into the function, adding to the **accumulator**, this is a potentially good case.
+
+```
+findWordInCellLinePrefix acc (x:xs) (c:cs) = x == cell2char c
+    = findWordInCellLinePrefix (c : acc) xs cs
+```
+
+The case where we know we got to the end of the match and we can return a good value.
+
+`findWordInCellLinePrefix acc [] _ = Just acc`
+
+And all the other cases where we've either gotten to the end and failed, we've run out of cells to match, etc., where we return `Nothing`.
+
+Now we can go back to edit our `findWordInLine` function and write it in terms of `findWordInCellLinePrefix`
+
+```
+findWordInLine :: String -> [Cell] -> Maybe [Cell]
+findWordInLine = undefined
+```
+
+We start taking a `word` and a `line` and we can ask wether the `word` is found at the head of the line as a prefix (we pass through the accumulator `[]`, the `word` and the `line`).
+
+`let found = findWordInCellLinePrefix [] word line`
+
+And this new expression will be a `Maybe` value so we can **pattern match** using `case`
+
+`in case found of`
+
+if `Nothing` was found it's not necessarily a failure because we can recurse back into the `findWordInLine` function and now pass in `word` because the word we are searching for hasn't changed, but now we want to recurse into the `tail` of `line` so that we can check wether the `word` is found at the next position in the `line`.
+
+`Nothing -> findWordInLine word (tail line)`
+
+And if the cell was found, then we need to return that value
+
+`Just cs -> Just cs`
+
+Instead of writing `Just cs` twice, we can use the `@` pattern because we don't care about the value inside and we simply return that expression.
+
+`cs@(Just _)-> cs`
+
+```
+findWordInLine :: String -> [Cell] -> Maybe [Cell]
+findWordInLine word line =
+    let found = findWordInCellLinePrefix [] word line
+    in case found of
+        Nothing -> findWordInLine word (tail line)
+        cs@(Just _) -> cs
+```
+
+Now we can get back to the refactor of the `findWord` function:
+
+```
+findWord :: Grid Cell -> String -> Maybe [Cell]
+findWord grid word =
+    let lines = getLines grid
+    found = or $ map (findWordInLine word) lines
+    in if found then Just word else Nothing
+```
+
+We still need `getLines grid`. `foundWords` now returns a list of list of `Cell`.
+`foundWords` will return a list of lists of `Cell`. The expression `foundWords` will in fact be a list of `Maybe` list of `Cell`, so if we call `catMaybes` on that list we will get a list of lists of `Cell`.
+
 ### Making the game playable with the IO Monad
 
+### Modelling the Game with Haskell's data types
+
 ### Random letters
+
+```
+
+```
